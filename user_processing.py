@@ -4,15 +4,23 @@ from datetime import datetime
 from airflow.providers.postgres.operators.postgres import PostgresOperator
 from airflow.providers.http.sensors.http import HttpSensor
 from airflow.providers.http.operators.http import SimpleHttpOperator
-# import here
 from airflow.operators.python import PythonOperator
+# import here
+from airflow.providers.postgres.hooks.postgres import PostgresHook
 
 import json
-from pandas import json_normalize # used in _process_user
+from pandas import json_normalize
 
-# The python function to call
+# The task to run
+def _store_user():
+    hook = PostgresHook(postgres_conn_id='postgres')
+    hook.copy_expert(
+        sql="COPY users FROM stdin WITH DELIMITER as ','",
+        filename='/tmp/processed_user.csv'
+    )
+
 def _process_user(ti):
-    user = ti.xcom_pull(task_ids="extract_user") # fetch data pushed by the previous task extract_user
+    user = ti.xcom_pull(task_ids="extract_user")
     user = user['results'][0]
     processed_user = json_normalize({
         'firstname': user['name']['first'],
@@ -44,7 +52,6 @@ with DAG(
             );
         ''')
         
-
     is_api_available = HttpSensor(
         task_id='is_api_available',
         http_conn_id='user_api',
@@ -60,12 +67,15 @@ with DAG(
         log_response=True
     )
     
-    # task here
-    process_user=PythonOperator(
+    process_user = PythonOperator(
         task_id='process_user',
         python_callable=_process_user
-        )
+    )
     
-    # dependencies here
-    extract_user>>process_user
+    # Add the task here
+    store_user=PythonOperator(
+        task_id='store_user',
+        python_callable=_store_user
+    )
     
+    extract_user >> process_user
